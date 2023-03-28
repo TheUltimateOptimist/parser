@@ -62,7 +62,7 @@ impl Next {
 }
 
 #[proc_macro_attribute]
-pub fn prefix(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let parsed_optionals = Punctuated::<MetaNameValue, Token![,]>::parse_terminated
         .parse(attr)
@@ -133,7 +133,6 @@ pub fn prefix(attr: TokenStream, item: TokenStream) -> TokenStream {
         .parse(callings_stream)
         .unwrap();
     let tokens = quote! {
-        use parser::{Parameter, Optional, Command, DataType};
         fn #command_name() -> Command<'static> {
             fn private__executor(#inputs)#body
             Command {
@@ -197,10 +196,21 @@ fn callings(inputs: &Punctuated<FnArg, Comma>) -> TokenStream {
     quote! {#puncts}.into()
 }
 
+struct StackEntry {
+    col_number: i32,
+    has_child: bool,
+}
+
+impl StackEntry {
+    fn new(col_number: i32) -> StackEntry {
+        StackEntry { col_number: col_number, has_child: false}
+    }
+}
+
 struct SourceBuilder {
     start_col: Option<i32>,
     source: String,
-    col_stack: Vec<i32>,
+    col_stack: Vec<StackEntry>,
     names: HashMap<i32, Vec<String>>,
 }
 
@@ -239,17 +249,23 @@ impl SourceBuilder {
 
     fn _push_string(&mut self, command: &RawCommand) {
         match command {
-            RawCommand::Leaf { col_number: _, name, definition } => self.source.push_str(&format!("CommandNode::Leaf{{name: {name}, command: {definition}()}},")),
-            RawCommand::Node { col_number: _, name } => self.source.push_str(&format!("CommandNode::Node{{name: {name}, children: vec![")),
-        }
-        if let RawCommand::Node{ col_number, name : _ } = command  {
-            self.col_stack.push(*col_number);
+            RawCommand::Leaf { col_number: _, name, definition } => {
+                self.col_stack.iter_mut().for_each(|x| x.has_child = true);
+                self.source.push_str(&format!("CommandNode::Leaf{{name: {name}, command: {definition}()}},"))
+            },
+            RawCommand::Node { col_number, name } => {
+                self.source.push_str(&format!("CommandNode::Node{{name: {name}, children: vec!["));
+                self.col_stack.push(StackEntry::new(*col_number));
+            },
         }
     }
 
     fn _pop_string(&mut self, child_col: i32) {
-        while let Some(parent_col) = self.col_stack.last() {
-            if *parent_col >= child_col  {
+        while let Some(parent) = self.col_stack.last() {
+            if parent.col_number >= child_col  {
+                if !parent.has_child {
+                    panic!("command has no final executor");
+                }
                 self.col_stack.pop();
                 self.source.push_str("]},")
             }
@@ -262,7 +278,7 @@ impl SourceBuilder {
     fn push(&mut self, command: RawCommand) {
         if self.start_col == None {
             self.start_col = Some(command.col_number());
-            self.source.push_str("use parser::CommandNode;\nfn command_tree() -> Vec<CommandNode<'static>>{return vec![")
+            self.source.push_str("fn command_tree() -> Vec<CommandNode<'static>>{return vec![")
 
         }
         println!("start_col: {}", self.start_col.unwrap());
@@ -286,22 +302,22 @@ impl SourceBuilder {
     }
 }
 
-fn validate_format(start_col: i32, parent_col: Option<&i32>, command: &RawCommand) {
+fn validate_format(start_col: i32, parent: Option<&StackEntry>, command: &RawCommand) {
     if command.col_number() % 4 != 0 {
         panic!("invalid format -> col_number not dividable by four");
     }
     if command.col_number() < start_col {
         panic!("invalid format -> col_number smaller than start");
     }
-    match parent_col {
-        Some(col_number) => match command {
+    match parent {
+        Some(stack_entry) => match command {
             RawCommand::Leaf{ col_number: child_col, name: _, definition: _ } => {
-                if *child_col != start_col && *child_col != col_number + 4 {
+                if *child_col != start_col && *child_col != stack_entry.col_number + 4 {
                     panic!("invalid format -> leaf col number should be equal to start_col or parent_col + 4")
                 }
             },
             RawCommand::Node { col_number: child_col, name: _ } => {
-                if *child_col < start_col || *child_col > col_number + 4   {
+                if *child_col < start_col || *child_col > stack_entry.col_number + 4   {
                     panic!("invalid format -> node col number should be between start_col and parent_col + 4")
                 }
             },
