@@ -93,6 +93,7 @@ impl Command<'_> {
 }
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 pub enum Optional<'a> {
     u8(&'a str, u8),
     u16(&'a str, u16),
@@ -132,6 +133,7 @@ impl Optional<'_> {
 }
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 pub enum Parameter<'a> {
     u8(&'a str),
     u16(&'a str),
@@ -149,6 +151,7 @@ pub enum Parameter<'a> {
 }
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 pub enum DataType {
     u8(u8),
     u16(u16),
