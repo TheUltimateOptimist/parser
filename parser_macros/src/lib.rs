@@ -64,16 +64,6 @@ impl Next {
 #[proc_macro_attribute]
 pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
-    let parsed_optionals = Punctuated::<MetaNameValue, Token![,]>::parse_terminated
-        .parse(attr)
-        .unwrap();
-    let mut optional_names = Vec::new();
-    let mut optional_values = Vec::new();
-    parsed_optionals.iter().for_each(|x| {
-        optional_names.push(&x.path);
-        optional_values.push(&x.value);
-    });
-    println!("{}", parsed_optionals.iter().len());
     let mut param_names = Vec::new();
     let mut param_types = Vec::new();
     for input in func.sig.inputs.iter() {
@@ -84,26 +74,30 @@ pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
+    let parsed_optionals = Punctuated::<MetaNameValue, Token![,]>::parse_terminated
+        .parse(attr)
+        .unwrap();
+    let mut optional_names = Vec::new();
+    let mut optional_values = Vec::new();
     let mut optional_types = Vec::new();
-    optional_names.iter().enumerate().for_each(|(_, x)| {
-        if let Some((i, _)) = param_names
-            .iter()
-            .enumerate()
-            .find(|(_, y)| y.to_string() == quote!(#x).to_string())
-        {
-            optional_types.push(&param_types[i]);
-        } else {
-            panic!("invalid option name")
-        }
-        if optional_names
-            .iter()
-            .filter(|y| quote!(#y).to_string() == quote!(#x).to_string())
-            .count()
-            > 1
-        {
+    param_names.iter().enumerate().for_each(|(i, x)|{
+        let matching_optionals = parsed_optionals.iter().filter(|y|{
+            let name = &y.path;
+            let name_string = quote!(#name).to_string();
+            name_string == x.to_string()
+        }).collect::<Vec<&MetaNameValue>>();
+        if matching_optionals.len() > 1 {
             panic!("duplicated option");
         }
+        if matching_optionals.len() == 1 {
+            optional_names.push(&matching_optionals[0].path);
+            optional_values.push(&matching_optionals[0].value);
+            optional_types.push(&param_types[i]);
+        }
     });
+    if optional_names.len() < parsed_optionals.len() {
+        panic!("invalid option name");
+    }
     let mut final_param_names = Vec::new();
     let mut final_param_types = Vec::new();
     param_names.iter().enumerate().for_each(|(index, x)| {
@@ -250,7 +244,6 @@ impl SourceBuilder {
     fn push(&mut self, command: RawCommand) {
         if self.start_col == None {
             self.start_col = Some(command.col_number());
-            //self.source.push_str("fn command_tree() -> Vec<CommandNode<'static>>{return vec![")
             self.source.push_str("fn parse(input: &str) {let tree = vec![")
         }
         println!("start_col: {}", self.start_col.unwrap());
