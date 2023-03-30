@@ -1,29 +1,17 @@
 pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) {
     let tokens = tokenize(input);
-        let mut node = &CommandNode::Node {
-            name: "root",
-            children: tree,
-        };
-        for (index, token) in tokens.iter().enumerate() {
-            match node {
-                CommandNode::Leaf { name, command } => {
-                    if name == token {
-                        command.execute(tokens.iter().skip(index).collect());
-                    } else {
-                        panic!("could not find matching command for leaf");
-                    }
-                }
-                CommandNode::Node { name: _, children } => {
-                    let matching_node = children.iter().find(|x| x.name_is(token));
-                    match matching_node {
-                        Some(new_node) => node = new_node,
-                        None => panic!("could not find matching command"),
-                    }
-                }
-            }
+    let mut remaining_tree = &tree;
+    for (index, token) in tokens.iter().enumerate() {
+        let matching_node = remaining_tree.iter().find(|x| x.name_is(token));
+        match matching_node {
+            Some(CommandNode::Leaf { name: _, command }) => command.execute(tokens.iter().skip(index + 1).collect()),
+            Some(CommandNode::Node { name: _, children }) => remaining_tree = children,
+            None => panic!("could not find matching command"),
         }
+    }
 }
 
+#[derive(Debug)]
 pub enum CommandNode<'a> {
     Leaf {
         name: &'a str,
@@ -44,6 +32,7 @@ impl CommandNode<'_> {
     }
 }
 
+#[derive(Debug)]
 pub struct Command<'a> {
     pub params: Vec<Parameter<'a>>,
     pub optionals: Vec<Optional<'a>>,
@@ -52,7 +41,9 @@ pub struct Command<'a> {
 
 impl Command<'_> {
     fn _extract_data_types(&self, tokens: Vec<&String>) -> Vec<DataType> {
+        println!("tokens: {:?}", tokens);
         let mut data_types = Vec::new();
+        println!("params: {:?}", self.params);
         self.params.iter().enumerate().for_each(|(index, x)| {
             data_types.push(DataType::from_param(
                 x,
@@ -66,6 +57,7 @@ impl Command<'_> {
             .skip(self.params.len())
             .collect::<Vec<&&String>>()
             .clone();
+        println!("optionals: {:?}", self.optionals);
         self.optionals.iter().for_each(|optional| {
             let pair = optional_tokens
                 .iter()
@@ -100,6 +92,7 @@ impl Command<'_> {
     }
 }
 
+#[derive(Debug)]
 pub enum Optional<'a> {
     u8(&'a str, u8),
     u16(&'a str, u16),
@@ -138,6 +131,7 @@ impl Optional<'_> {
     }
 }
 
+#[derive(Debug)]
 pub enum Parameter<'a> {
     u8(&'a str),
     u16(&'a str),
@@ -154,6 +148,7 @@ pub enum Parameter<'a> {
     String(&'a str),
 }
 
+#[derive(Debug)]
 pub enum DataType {
     u8(u8),
     u16(u16),
@@ -364,6 +359,7 @@ impl From<&DataType> for f64 {
 
 impl From<&DataType> for String {
     fn from(value: &DataType) -> Self {
+        println!("datatype: {:?}", value);
         match value {
             DataType::String(v) => (*v.clone()).to_string(),
             _ => panic!("invalid"),
