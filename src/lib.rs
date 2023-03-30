@@ -1,14 +1,50 @@
-pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) {
-    let tokens = tokenize(input);
+use std::{error::Error, fmt, str::FromStr};
+
+#[derive(Debug)]
+pub enum ParseError {
+    MissingParams,
+    MissingOptionalValue,
+    DuplicatedOptional,
+    UnrecognizedTokens(Vec<String>),
+    MissmatchedTypes,
+    InvalidCommand(String),
+    WhiteSpaceExpected,
+}
+
+impl Error for ParseError {}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ParseError::MissingParams => {
+                write!(f, "You have not provided all required parameters.")
+            }
+            ParseError::MissingOptionalValue => write!(f, "You have not provided the value for all entered optionals."),
+            ParseError::DuplicatedOptional => write!(f, "You have provided the same optional more than once."),
+            ParseError::UnrecognizedTokens(tokens) => write!(f, "The following tokens can not be recognized: {}",
+            tokens.iter().map(|x| format!("\"{x}\"")).collect::<Vec<String>>().join(", ")
+            ),
+            ParseError::MissmatchedTypes => write!(f, "You provided a value with the wrong Type."),
+            ParseError::InvalidCommand(token) => write!(f, "No command or subcommand exists for the token: \"{token}\""), 
+            ParseError::WhiteSpaceExpected => write!(f, "You provided a String as a value without a space after it.")
+        }
+    }
+}
+
+pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) -> Result<(), ParseError>{
+    let tokens = tokenize(input)?;
     let mut remaining_tree = &tree;
     for (index, token) in tokens.iter().enumerate() {
         let matching_node = remaining_tree.iter().find(|x| x.name_is(token));
         match matching_node {
-            Some(CommandNode::Leaf { name: _, command }) => command.execute(tokens.iter().skip(index + 1).collect()),
+            Some(CommandNode::Leaf { name: _, command }) => {
+                command.execute(tokens.iter().skip(index + 1).collect())?
+            }
             Some(CommandNode::Node { name: _, children }) => remaining_tree = children,
-            None => panic!("could not find matching command"),
+            None => return Err(ParseError::InvalidCommand(token.to_string())),
         }
     }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -40,55 +76,64 @@ pub struct Command<'a> {
 }
 
 impl Command<'_> {
-    fn _extract_data_types(&self, tokens: Vec<&String>) -> Vec<DataType> {
+    fn _extract_data_types(&self, tokens: Vec<&String>) -> Result<Vec<DataType>, ParseError> {
         println!("tokens: {:?}", tokens);
         let mut data_types = Vec::new();
         println!("params: {:?}", self.params);
-        self.params.iter().enumerate().for_each(|(index, x)| {
-            data_types.push(DataType::from_param(
-                x,
-                tokens
-                    .get(index)
-                    .expect("not all parameters have been specified"),
-            ))
-        });
+        for (index, param) in self.params.iter().enumerate() {
+            data_types.push(
+                DataType::from_param(
+                param,
+                tokens.get(index).ok_or(ParseError::MissingParams)?,
+                )?
+            )
+        }
         let mut optional_tokens = tokens
             .iter()
             .skip(self.params.len())
             .collect::<Vec<&&String>>()
             .clone();
         println!("optionals: {:?}", self.optionals);
-        self.optionals.iter().for_each(|optional| {
-            let pair = optional_tokens
+        for optional in &self.optionals {
+            let pairs = optional_tokens
                 .iter()
                 .enumerate()
-                .find(|(_, x)| optional.name_is(x));
-            let data_type = match pair {
+                .filter(|(_, x)| optional.name_is(x))
+                .map(|(i, x)| (i, *x))
+                .collect::<Vec<(usize, &&String)>>();
+            if pairs.len() > 1 {
+                return Err(ParseError::DuplicatedOptional);
+            };
+            let data_type = match pairs.get(0) {
                 Some((index, _)) => match optional {
                     Optional::bool(_) => {
-                        optional_tokens.remove(index);
-                        DataType::from_optional(optional, None)
+                        optional_tokens.remove(*index);
+                        DataType::bool(true)
                     }
                     _ => {
-                        let value = optional_tokens
+                        let value = *optional_tokens
                             .get(index + 1)
-                            .expect("value has to be specified for optional")
-                            .clone();
+                            .ok_or(ParseError::MissingOptionalValue)?;
                         optional_tokens.remove(index + 1);
-                        optional_tokens.remove(index);
-                        DataType::from_optional(optional, Some(value))
+                        optional_tokens.remove(*index);
+                        DataType::from_optional(optional, Some(value))?
                     }
                 },
-                None => DataType::from_optional(optional, None),
+                None => DataType::from_optional(optional, None)?,
             };
             data_types.push(data_type);
-        });
-        return data_types;
+        }
+        if !optional_tokens.is_empty() {
+            let owned: Vec<String> = optional_tokens.iter().map(|x| x.to_string()).collect();
+            return Err(ParseError::UnrecognizedTokens(owned));
+        }
+        return Ok(data_types);
     }
 
-    fn execute(&self, tokens: Vec<&String>) {
-        let data_types = self._extract_data_types(tokens);
+    fn execute(&self, tokens: Vec<&String>) -> Result<(), ParseError> {
+        let data_types = self._extract_data_types(tokens)?;
         (self.execute)(data_types);
+        Ok(())
     }
 }
 
@@ -170,83 +215,84 @@ pub enum DataType {
 }
 
 impl DataType {
-    fn from_param(param: &Parameter, input: &str) -> DataType {
-        let message = "parameter conversion failed";
+    fn _parse_input<T: FromStr>(s: &str) -> Result<T, ParseError> {
+        s.parse::<T>().map_err(|_| ParseError::MissmatchedTypes)
+    }
+    fn from_param(param: &Parameter, input: &str) -> Result<DataType, ParseError> {
         match param {
-            Parameter::u8(_) => DataType::u8(input.parse().expect(message)),
-            Parameter::u16(_) => DataType::u16(input.parse().expect(message)),
-            Parameter::u32(_) => DataType::u32(input.parse().expect(message)),
-            Parameter::u64(_) => DataType::u64(input.parse().expect(message)),
-            Parameter::u128(_) => DataType::u128(input.parse().expect(message)),
-            Parameter::i8(_) => DataType::i8(input.parse().expect(message)),
-            Parameter::i16(_) => DataType::i16(input.parse().expect(message)),
-            Parameter::i32(_) => DataType::i32(input.parse().expect(message)),
-            Parameter::i64(_) => DataType::i64(input.parse().expect(message)),
-            Parameter::i128(_) => DataType::i128(input.parse().expect(message)),
-            Parameter::f32(_) => DataType::f32(input.parse().expect(message)),
-            Parameter::f64(_) => DataType::f64(input.parse().expect(message)),
-            Parameter::String(_) => DataType::String(input.parse().expect(message)),
+            Parameter::u8(_) => Ok(DataType::u8(Self::_parse_input(input)?)),
+            Parameter::u16(_) => Ok(DataType::u16(Self::_parse_input(input)?)),
+            Parameter::u32(_) => Ok(DataType::u32(Self::_parse_input(input)?)),
+            Parameter::u64(_) => Ok(DataType::u64(Self::_parse_input(input)?)),
+            Parameter::u128(_) => Ok(DataType::u128(Self::_parse_input(input)?)),
+            Parameter::i8(_) => Ok(DataType::i8(Self::_parse_input(input)?)),
+            Parameter::i16(_) => Ok(DataType::i16(Self::_parse_input(input)?)),
+            Parameter::i32(_) => Ok(DataType::i32(Self::_parse_input(input)?)),
+            Parameter::i64(_) => Ok(DataType::i64(Self::_parse_input(input)?)),
+            Parameter::i128(_) => Ok(DataType::i128(Self::_parse_input(input)?)),
+            Parameter::f32(_) => Ok(DataType::f32(Self::_parse_input(input)?)),
+            Parameter::f64(_) => Ok(DataType::f64(Self::_parse_input(input)?)),
+            Parameter::String(_) => Ok(DataType::String(input.to_string())),
         }
     }
 
-    fn from_optional(optional: &Optional, input: Option<&str>) -> DataType {
-        let message = "optional conversion failed";
+    fn from_optional(optional: &Optional, input: Option<&str>) -> Result<DataType, ParseError> {
         match optional {
             Optional::u8(_, default) => match input {
-                Some(value) => DataType::u8(value.parse().expect(message)),
-                None => DataType::u8(*default),
+                Some(value) => Ok(DataType::u8(Self::_parse_input(value)?)),
+                None => Ok(DataType::u8(*default)),
             },
             Optional::u16(_, default) => match input {
-                Some(value) => DataType::u16(value.parse().expect(message)),
-                None => DataType::u16(*default),
+                Some(value) => Ok(DataType::u16(Self::_parse_input(value)?)),
+                None => Ok(DataType::u16(*default)),
             },
             Optional::u32(_, default) => match input {
-                Some(value) => DataType::u32(value.parse().expect(message)),
-                None => DataType::u32(*default),
+                Some(value) => Ok(DataType::u32(Self::_parse_input(value)?)),
+                None => Ok(DataType::u32(*default)),
             },
             Optional::u64(_, default) => match input {
-                Some(value) => DataType::u64(value.parse().expect(message)),
-                None => DataType::u64(*default),
+                Some(value) => Ok(DataType::u64(Self::_parse_input(value)?)),
+                None => Ok(DataType::u64(*default)),
             },
             Optional::u128(_, default) => match input {
-                Some(value) => DataType::u128(value.parse().expect(message)),
-                None => DataType::u128(*default),
+                Some(value) => Ok(DataType::u128(Self::_parse_input(value)?)),
+                None => Ok(DataType::u128(*default)),
             },
             Optional::i8(_, default) => match input {
-                Some(value) => DataType::i8(value.parse().expect(message)),
-                None => DataType::i8(*default),
+                Some(value) => Ok(DataType::i8(Self::_parse_input(value)?)),
+                None => Ok(DataType::i8(*default)),
             },
             Optional::i16(_, default) => match input {
-                Some(value) => DataType::i16(value.parse().expect(message)),
-                None => DataType::i16(*default),
+                Some(value) => Ok(DataType::i16(Self::_parse_input(value)?)),
+                None => Ok(DataType::i16(*default)),
             },
             Optional::i32(_, default) => match input {
-                Some(value) => DataType::i32(value.parse().expect(message)),
-                None => DataType::i32(*default),
+                Some(value) => Ok(DataType::i32(Self::_parse_input(value)?)),
+                None => Ok(DataType::i32(*default)),
             },
             Optional::i64(_, default) => match input {
-                Some(value) => DataType::i64(value.parse().expect(message)),
-                None => DataType::i64(*default),
+                Some(value) => Ok(DataType::i64(Self::_parse_input(value)?)),
+                None => Ok(DataType::i64(*default)),
             },
             Optional::i128(_, default) => match input {
-                Some(value) => DataType::i128(value.parse().expect(message)),
-                None => DataType::i128(*default),
+                Some(value) => Ok(DataType::i128(Self::_parse_input(value)?)),
+                None => Ok(DataType::i128(*default)),
             },
             Optional::f32(_, default) => match input {
-                Some(value) => DataType::f32(value.parse().expect(message)),
-                None => DataType::f32(*default),
+                Some(value) => Ok(DataType::f32(Self::_parse_input(value)?)),
+                None => Ok(DataType::f32(*default)),
             },
             Optional::f64(_, default) => match input {
-                Some(value) => DataType::f64(value.parse().expect(message)),
-                None => DataType::f64(*default),
+                Some(value) => Ok(DataType::f64(Self::_parse_input(value)?)),
+                None => Ok(DataType::f64(*default)),
             },
             Optional::String(_, default) => match input {
-                Some(value) => DataType::String(value.parse().expect(message)),
-                None => DataType::String(default.to_string()),
+                Some(value) => Ok(DataType::String(value.to_string())),
+                None => Ok(DataType::String(default.to_string())),
             },
             Optional::bool(_) => match input {
-                Some(value) => DataType::bool(value.parse().expect(message)),
-                None => DataType::bool(false),
+                Some(value) => Ok(DataType::bool(Self::_parse_input(value)?)),
+                None => Ok(DataType::bool(false)),
             },
         }
     }
@@ -256,7 +302,7 @@ impl From<&DataType> for u8 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::u8(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to u8 from a non-u8 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -265,7 +311,7 @@ impl From<&DataType> for u16 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::u16(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to u16 from a non-u16 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -274,7 +320,7 @@ impl From<&DataType> for u32 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::u32(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to u32 from a non-u32 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -283,7 +329,7 @@ impl From<&DataType> for u64 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::u64(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to u64 from a non-u64 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -292,7 +338,7 @@ impl From<&DataType> for u128 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::u128(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to u128 from a non-u128 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -301,7 +347,7 @@ impl From<&DataType> for i8 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::i8(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to i8 from a non-i8 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -310,7 +356,7 @@ impl From<&DataType> for i16 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::i16(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to i16 from a non-i16 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -319,7 +365,7 @@ impl From<&DataType> for i32 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::i32(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to i32 from a non-i32 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -328,7 +374,7 @@ impl From<&DataType> for i64 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::i64(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to i64 from a non-i64 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -337,7 +383,7 @@ impl From<&DataType> for i128 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::i128(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to i128 from a non-i128 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -346,7 +392,7 @@ impl From<&DataType> for f32 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::f32(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to f32 from a non-f32 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -355,7 +401,7 @@ impl From<&DataType> for f64 {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::f64(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to f64 from a non-f64 DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -365,7 +411,7 @@ impl From<&DataType> for String {
         println!("datatype: {:?}", value);
         match value {
             DataType::String(v) => (*v.clone()).to_string(),
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to String from a non-String DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
@@ -374,12 +420,12 @@ impl From<&DataType> for bool {
     fn from(value: &DataType) -> Self {
         match value {
             DataType::bool(v) => *v,
-            _ => panic!("invalid"),
+            _ => panic!("Error: Tried to convert to bool from a non-bool DataType. This implies an error in the source code. It should never happen."),
         }
     }
 }
 
-pub fn tokenize(input: &str) -> Vec<String> {
+pub fn tokenize(input: &str) -> Result<Vec<String>, ParseError> {
     let mut parts: Vec<String> = vec![];
     let mut single_quote = false;
     let mut double_quote = false;
@@ -399,7 +445,7 @@ pub fn tokenize(input: &str) -> Vec<String> {
             continue;
         }
         if whitespace_expected {
-            panic!("expected whitespace");
+            return Err(ParseError::WhiteSpaceExpected);
         }
         if char == '"' {
             if single_quote {
@@ -436,5 +482,5 @@ pub fn tokenize(input: &str) -> Vec<String> {
     if word.len() > 0 {
         parts.push(word.clone());
     }
-    return parts;
+    return Ok(parts);
 }
