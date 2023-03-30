@@ -41,7 +41,7 @@ pub fn register(item: TokenStream) -> TokenStream {
         source_builder.push(RawCommand::Node { col_number: tree.span().start().column as i32 - 1, name: tree.to_string()});
     }
     source_builder.finish();
-    println!("{}", &source_builder.source);
+    //println!("{}", &source_builder.source);
     TokenStream::from_str(&source_builder.source).unwrap()
 }
 
@@ -247,6 +247,27 @@ impl SourceBuilder {
         }
     }
 
+    fn push(&mut self, command: RawCommand) {
+        if self.start_col == None {
+            self.start_col = Some(command.col_number());
+            //self.source.push_str("fn command_tree() -> Vec<CommandNode<'static>>{return vec![")
+            self.source.push_str("fn parse(input: &str) {let tree = vec![")
+        }
+        println!("start_col: {}", self.start_col.unwrap());
+        validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);
+        match self.names.get_mut(&command.col_number()) {
+            Some(siblings) => {
+                if siblings.contains(command.name()) {
+                    panic!("duplicate command name");
+                }
+                siblings.push(command.name().to_string());
+            },
+            None => {self.names.insert(command.col_number(), vec![command.name().to_string()]); ()},
+        }
+        self._pop_string(command.col_number());
+        self._push_string(&command);
+    }
+
     fn _push_string(&mut self, command: &RawCommand) {
         match command {
             RawCommand::Leaf { col_number: _, name, definition } => {
@@ -275,30 +296,9 @@ impl SourceBuilder {
         }
     }
 
-    fn push(&mut self, command: RawCommand) {
-        if self.start_col == None {
-            self.start_col = Some(command.col_number());
-            self.source.push_str("fn command_tree() -> Vec<CommandNode<'static>>{return vec![")
-
-        }
-        println!("start_col: {}", self.start_col.unwrap());
-        validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);
-        match self.names.get_mut(&command.col_number()) {
-            Some(siblings) => {
-                if siblings.contains(command.name()) {
-                    panic!("duplicate command name");
-                }
-                siblings.push(command.name().to_string());
-            },
-            None => {self.names.insert(command.col_number(), vec![command.name().to_string()]); ()},
-        }
-        self._pop_string(command.col_number());
-        self._push_string(&command);
-    }
-
     fn finish(&mut self) {
         self._pop_string(self.start_col.unwrap());
-        self.source.push_str("];}")
+        self.source.push_str("]; parse_with_tree(tree, input);}")
     }
 }
 
