@@ -1,5 +1,32 @@
 use std::{error::Error, fmt, str::FromStr};
 
+pub struct TreeNode {
+    pub name: String,
+    pub children: Option<Vec<String>>,
+}
+
+pub enum Output {
+    Empty,
+    Error(String),
+    Text(String),
+    Table{title: String, data: Vec<Vec<String>>},
+    Tree(TreeNode),
+    PomodoroTimer{duration: i32, pause: i32, topic_id: i32, topic_name: String},//both in seconds
+}
+
+impl Output {
+    pub fn code(&self) -> i32 {
+        match self {
+            Output::Empty => 200,
+            Output::Error(_) => 201,
+            Output::Text(_) => 202,
+            Output::Table { title: _, data: _ } => 203,
+            Output::Tree(_) => 204,
+            Output::PomodoroTimer { duration: _, pause: _, topic_id: _, topic_name: _ } => 205,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ParseError {
     MissingParams,
