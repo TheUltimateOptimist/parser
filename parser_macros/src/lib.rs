@@ -128,12 +128,12 @@ pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
         .unwrap();
     let tokens = quote! {
         fn #command_name() -> Command<'static> {
-            fn private__executor(#inputs)#body
+            fn private__executor(#inputs) -> Output #body
             Command {
                 params : vec![#final_params_code],
                 optionals: vec![#optionals_code],
-                execute: |arguments| {
-                    private__executor(#callings_code);
+                execute: |arguments| -> Output {
+                    private__executor(#callings_code)
                 }
             }
         }
@@ -244,7 +244,7 @@ impl SourceBuilder {
     fn push(&mut self, command: RawCommand) {
         if self.start_col == None {
             self.start_col = Some(command.col_number());
-            self.source.push_str("fn parse(input: &str) {let tree = vec![")
+            self.source.push_str("fn parse(input: &str) -> Result<Output, ParseError> {let tree = vec![")
         }
         println!("start_col: {}", self.start_col.unwrap());
         validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);
@@ -291,7 +291,7 @@ impl SourceBuilder {
 
     fn finish(&mut self) {
         self._pop_string(self.start_col.unwrap());
-        self.source.push_str("]; parse_with_tree(tree, input);}")
+        self.source.push_str("]; return parse_with_tree(tree, input);}")
     }
 }
 
