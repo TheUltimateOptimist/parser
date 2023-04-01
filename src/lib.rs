@@ -1,17 +1,53 @@
 use std::{error::Error, fmt, str::FromStr};
+use serde::Serialize;
 
+#[derive(Serialize)]
 pub struct TreeNode {
     pub name: String,
     pub children: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+pub struct Table {
+    title: String,
+    data: Vec<Vec<String>>,
+}
+
+#[derive(Serialize)]
+pub struct PomodoroTimer {
+    duration: i32, //in seconds
+    pause: i32, //in seconds
+    topic_id: i32,
+    topic_name: String,
 }
 
 pub enum Output {
     Empty,
     Error(String),
     Text(String),
-    Table{title: String, data: Vec<Vec<String>>},
+    Table(Table),
     Tree(TreeNode),
-    PomodoroTimer{duration: i32, pause: i32, topic_id: i32, topic_name: String},//both in seconds
+    PomodoroTimer(PomodoroTimer),
+}
+
+impl Serialize for Output {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        #[derive(Serialize)]
+        struct Serializable<T> {
+            code: i32,
+            content: T,
+        }
+        match self {
+            Output::Empty => serializer.serialize_some(&Serializable{code: self.code(), content: ""}),
+            Output::Error(message) => serializer.serialize_some(&Serializable{code: self.code(), content: message}),
+            Output::Text(text) => serializer.serialize_some(&Serializable{code: self.code(), content: text}),
+            Output::Table(table) => serializer.serialize_some(&Serializable{code: self.code(), content: table}),
+            Output::Tree(tree_node) => serializer.serialize_some(&Serializable{code: self.code(), content: tree_node}),
+            Output::PomodoroTimer(timer) => serializer.serialize_some(&Serializable{code: self.code(), content: timer}),
+        }
+    }
 }
 
 impl Output {
@@ -20,9 +56,23 @@ impl Output {
             Output::Empty => 200,
             Output::Error(_) => 201,
             Output::Text(_) => 202,
-            Output::Table { title: _, data: _ } => 203,
+            Output::Table(_) => 203,
             Output::Tree(_) => 204,
-            Output::PomodoroTimer { duration: _, pause: _, topic_id: _, topic_name: _ } => 205,
+            Output::PomodoroTimer(_) => 205,
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        fn _to_json<T: Serialize>(output: &Output, content: T) -> String {
+            serde_json::json!({"code": output.code(), "content": content}).to_string()
+        }
+        match self {
+            Output::Empty => _to_json(self, ""),
+            Output::Error(message) => _to_json(self, message),
+            Output::Text(text) => _to_json(self, text),
+            Output::Table(table) => _to_json(self, table),
+            Output::Tree(tree_node) => _to_json(self, tree_node),
+            Output::PomodoroTimer(timer) => _to_json(self, timer),
         }
     }
 }
@@ -36,6 +86,7 @@ pub enum ParseError {
     MissmatchedTypes,
     InvalidCommand(String),
     WhiteSpaceExpected,
+    NoCommand,
 }
 
 impl Error for ParseError {}
@@ -53,25 +104,26 @@ impl fmt::Display for ParseError {
             ),
             ParseError::MissmatchedTypes => write!(f, "You provided a value with the wrong Type."),
             ParseError::InvalidCommand(token) => write!(f, "No command or subcommand exists for the token: \"{token}\""), 
-            ParseError::WhiteSpaceExpected => write!(f, "You provided a String as a value without a space after it.")
+            ParseError::WhiteSpaceExpected => write!(f, "You provided a String as a value without a space after it."),
+            ParseError::NoCommand => write!(f, "No command could be found for the given input."),
         }
     }
 }
 
-pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) -> Result<(), ParseError>{
+pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) -> Result<Output, ParseError>{
     let tokens = tokenize(input)?;
     let mut remaining_tree = &tree;
     for (index, token) in tokens.iter().enumerate() {
         let matching_node = remaining_tree.iter().find(|x| x.name_is(token));
         match matching_node {
             Some(CommandNode::Leaf { name: _, command }) => {
-                command.execute(tokens.iter().skip(index + 1).collect())?
+                return Ok(command.execute(tokens.iter().skip(index + 1).collect())?);
             }
             Some(CommandNode::Node { name: _, children }) => remaining_tree = children,
             None => return Err(ParseError::InvalidCommand(token.to_string())),
         }
     }
-    Ok(())
+    return Err(ParseError::NoCommand);
 }
 
 #[derive(Debug)]
@@ -99,7 +151,7 @@ impl CommandNode<'_> {
 pub struct Command<'a> {
     pub params: Vec<Parameter<'a>>,
     pub optionals: Vec<Optional<'a>>,
-    pub execute: fn(Vec<DataType>),
+    pub execute: fn(Vec<DataType>) -> Output,
 }
 
 impl Command<'_> {
@@ -157,10 +209,9 @@ impl Command<'_> {
         return Ok(data_types);
     }
 
-    fn execute(&self, tokens: Vec<&String>) -> Result<(), ParseError> {
+    fn execute(&self, tokens: Vec<&String>) -> Result<Output, ParseError> {
         let data_types = self._extract_data_types(tokens)?;
-        (self.execute)(data_types);
-        Ok(())
+        Ok((self.execute)(data_types))
     }
 }
 
