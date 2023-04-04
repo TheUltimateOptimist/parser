@@ -132,8 +132,8 @@ pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
             Command {
                 params : vec![#final_params_code],
                 optionals: vec![#optionals_code],
-                execute: |arguments| -> Output {
-                    private__executor(#callings_code)
+                execute: |arguments| -> Result<Output, ParseError> {
+                    Ok(private__executor(#callings_code))
                 }
             }
         }
@@ -149,7 +149,7 @@ fn params(names: Vec<&&Ident>, types: Vec<&&Box<Type>>) -> TokenStream {
         .map(|(index, x)| -> TokenStream {
             let typ = &types[index];
             let name = x.to_string();
-            quote!(Parameter::#typ(#name)).into()
+            quote!(Parameter{name: #name, datatype: DataType::#typ}).into()
         })
         .collect::<Vec<TokenStream>>();
     let mut puncts = Punctuated::<Expr, Token![,]>::new();
@@ -167,7 +167,7 @@ fn optionals(names: Vec<&Path>, types: Vec<&&Box<Type>>, defaults: Vec<&Expr>) -
             let typ = types[index];
             let default = defaults[index];
             let name = quote!(#x).to_string();
-            quote!(Optional::#typ(#name, #default)).into()
+            quote!(Optional{name: #name, default: #default.to_string(), datatype: DataType::#typ}).into()
         })
         .collect::<Vec<TokenStream>>();
     let mut puncts = Punctuated::<Expr, Token![,]>::new();
@@ -181,7 +181,7 @@ fn callings(inputs: &Punctuated<FnArg, Comma>) -> TokenStream {
     let streams = inputs
         .iter()
         .enumerate()
-        .map(|(index, _)| -> TokenStream { quote!((&arguments[#index]).into()).into() })
+        .map(|(index, _)| -> TokenStream { quote!((&arguments[#index]).parse().map_err(|err| ParseError::MissmatchedTypes)?).into() })
         .collect::<Vec<TokenStream>>();
     let mut puncts = Punctuated::<Expr, Token![,]>::new();
     for stream in streams {
