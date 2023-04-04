@@ -146,7 +146,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) -> Result<Output, ParseError> {
+pub fn parse_with_tree(tree: Vec<CommandNode>, input: &str) -> Result<Vec<Output>, ParseError> {
     let tokens = tokenize(input)?;
     let mut remaining_tree = &tree;
     for (index, token) in tokens.iter().enumerate() {
@@ -187,7 +187,7 @@ impl CommandNode<'_> {
 pub struct Command<'a> {
     pub params: Vec<Parameter<'a>>,
     pub optionals: Vec<Optional<'a>>,
-    pub execute: fn(Vec<String>) -> Result<Output, ParseError>,
+    pub execute: fn(Vec<String>) -> Result<Vec<Output>, ParseError>,
 }
 
 impl Command<'_> {
@@ -245,7 +245,7 @@ impl Command<'_> {
         return Ok(arguments);
     }
 
-    fn execute(&self, tokens: Vec<String>) -> Result<Output, ParseError> {
+    fn execute(&self, tokens: Vec<String>) -> Result<Vec<Output>, ParseError> {
         let arguments = self._extract_arguments(tokens)?;
         (self.execute)(arguments)
     }

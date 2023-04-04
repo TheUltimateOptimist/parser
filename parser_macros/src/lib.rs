@@ -1,15 +1,15 @@
 #![feature(proc_macro_span)]
 extern crate proc_macro;
 use core::panic;
-use std::str::FromStr;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use proc_macro::TokenStream;
 use proc_macro::TokenTree;
 use quote::quote;
 use syn::{
-    self, parse::Parser, parse_macro_input, punctuated::Punctuated,
-    token::Comma, Expr, FnArg, Ident, ItemFn, MetaNameValue, Path, Token, Type,
+    self, parse::Parser, parse_macro_input, punctuated::Punctuated, token::Comma, Expr, FnArg,
+    Ident, ItemFn, MetaNameValue, Path, Token, Type,
 };
 
 #[proc_macro]
@@ -23,22 +23,32 @@ pub fn register(item: TokenStream) -> TokenStream {
             Next::Name => name = Some(token),
             Next::Value => {
                 if let Some(name_token) = name {
-                    source_builder.push(RawCommand::Leaf { col_number: name_token.span().start().column as i32 - 1, name: name_token.to_string(), definition: token.to_string()});
+                    source_builder.push(RawCommand::Leaf {
+                        col_number: name_token.span().start().column as i32 - 1,
+                        name: name_token.to_string(),
+                        definition: token.to_string(),
+                    });
                     name = None;
                 }
-            },
+            }
             Next::NameOrColon => {
                 if !token_str.eq(":") {
                     let tree = name.unwrap();
-                    source_builder.push(RawCommand::Node { col_number: tree.span().start().column as i32 - 1, name: tree.to_string()});
+                    source_builder.push(RawCommand::Node {
+                        col_number: tree.span().start().column as i32 - 1,
+                        name: tree.to_string(),
+                    });
                     name = Some(token);
                 }
-            },
+            }
         }
         next = next.next(token_str);
     }
     if let Some(tree) = name {
-        source_builder.push(RawCommand::Node { col_number: tree.span().start().column as i32 - 1, name: tree.to_string()});
+        source_builder.push(RawCommand::Node {
+            col_number: tree.span().start().column as i32 - 1,
+            name: tree.to_string(),
+        });
     }
     source_builder.finish();
     //println!("{}", &source_builder.source);
@@ -56,13 +66,18 @@ impl Next {
         match self {
             Next::Name => Next::NameOrColon,
             Next::Value => Next::Name,
-            Next::NameOrColon => if value.eq(":") {Next::Value} else {Next::NameOrColon}
+            Next::NameOrColon => {
+                if value.eq(":") {
+                    Next::Value
+                } else {
+                    Next::NameOrColon
+                }
+            }
         }
     }
 }
 
-#[proc_macro_attribute]
-pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
+fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let mut param_names = Vec::new();
     let mut param_types = Vec::new();
@@ -80,12 +95,15 @@ pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut optional_names = Vec::new();
     let mut optional_values = Vec::new();
     let mut optional_types = Vec::new();
-    param_names.iter().enumerate().for_each(|(i, x)|{
-        let matching_optionals = parsed_optionals.iter().filter(|y|{
-            let name = &y.path;
-            let name_string = quote!(#name).to_string();
-            name_string == x.to_string()
-        }).collect::<Vec<&MetaNameValue>>();
+    param_names.iter().enumerate().for_each(|(i, x)| {
+        let matching_optionals = parsed_optionals
+            .iter()
+            .filter(|y| {
+                let name = &y.path;
+                let name_string = quote!(#name).to_string();
+                name_string == x.to_string()
+            })
+            .collect::<Vec<&MetaNameValue>>();
         if matching_optionals.len() > 1 {
             panic!("duplicated option");
         }
@@ -126,20 +144,45 @@ pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let callings_code = Punctuated::<Expr, Token![,]>::parse_terminated
         .parse(callings_stream)
         .unwrap();
-    let tokens = quote! {
-        fn #command_name() -> Command<'static> {
-            fn private__executor(#inputs) -> Output #body
-            Command {
-                params : vec![#final_params_code],
-                optionals: vec![#optionals_code],
-                execute: |arguments| -> Result<Output, ParseError> {
-                    Ok(private__executor(#callings_code))
+    let tokens = match multiple {
+        true => quote! {
+            fn #command_name() -> Command<'static> {
+                fn private__executor(#inputs) -> Vec<Output> #body
+                Command {
+                    params : vec![#final_params_code],
+                    optionals: vec![#optionals_code],
+                    execute: |arguments| -> Result<Vec<Output>, ParseError> {
+                        Ok(private__executor(#callings_code))
+                    }
                 }
             }
-        }
+        },
+        false => quote! {
+            fn #command_name() -> Command<'static> {
+                fn private__executor(#inputs) -> Output #body
+                Command {
+                    params : vec![#final_params_code],
+                    optionals: vec![#optionals_code],
+                    execute: |arguments| -> Result<Vec<Output>, ParseError> {
+                        let output = private__executor(#callings_code);
+                        Ok(vec![output])
+                    }
+                }
+            }
+        },
     };
     println!("{}", tokens.to_string());
     TokenStream::from(tokens)
+}
+
+#[proc_macro_attribute]
+pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
+    command_basis(attr, item, false)
+}
+
+#[proc_macro_attribute]
+pub fn command_n(attr: TokenStream, item: TokenStream) -> TokenStream {
+    command_basis(attr, item, true)
 }
 
 fn params(names: Vec<&&Ident>, types: Vec<&&Box<Type>>) -> TokenStream {
@@ -167,7 +210,8 @@ fn optionals(names: Vec<&Path>, types: Vec<&&Box<Type>>, defaults: Vec<&Expr>) -
             let typ = types[index];
             let default = defaults[index];
             let name = quote!(#x).to_string();
-            quote!(Optional{name: #name, default: #default.to_string(), datatype: DataType::#typ}).into()
+            quote!(Optional{name: #name, default: #default.to_string(), datatype: DataType::#typ})
+                .into()
         })
         .collect::<Vec<TokenStream>>();
     let mut puncts = Punctuated::<Expr, Token![,]>::new();
@@ -181,7 +225,9 @@ fn callings(inputs: &Punctuated<FnArg, Comma>) -> TokenStream {
     let streams = inputs
         .iter()
         .enumerate()
-        .map(|(index, _)| -> TokenStream { quote!((&arguments[#index]).parse().map_err(|err| ParseError::MissmatchedTypes)?).into() })
+        .map(|(index, _)| -> TokenStream {
+            quote!((&arguments[#index]).parse().map_err(|err| ParseError::MissmatchedTypes)?).into()
+        })
         .collect::<Vec<TokenStream>>();
     let mut puncts = Punctuated::<Expr, Token![,]>::new();
     for stream in streams {
@@ -197,7 +243,10 @@ struct StackEntry {
 
 impl StackEntry {
     fn new(col_number: i32) -> StackEntry {
-        StackEntry { col_number: col_number, has_child: false}
+        StackEntry {
+            col_number: col_number,
+            has_child: false,
+        }
     }
 }
 
@@ -208,24 +257,44 @@ struct SourceBuilder {
     names: HashMap<i32, Vec<String>>,
 }
 
-
 enum RawCommand {
-    Leaf {col_number: i32, name: String, definition: String },
-    Node {col_number: i32, name: String },
+    Leaf {
+        col_number: i32,
+        name: String,
+        definition: String,
+    },
+    Node {
+        col_number: i32,
+        name: String,
+    },
 }
 
 impl RawCommand {
     fn col_number(&self) -> i32 {
         match self {
-            RawCommand::Leaf { col_number, name: _, definition: _ } => *col_number,
-            RawCommand::Node { col_number, name: _ } => *col_number,
+            RawCommand::Leaf {
+                col_number,
+                name: _,
+                definition: _,
+            } => *col_number,
+            RawCommand::Node {
+                col_number,
+                name: _,
+            } => *col_number,
         }
     }
 
     fn name(&self) -> &String {
         match self {
-            RawCommand::Leaf { col_number: _, name, definition: _ } => name,
-            RawCommand::Node { col_number: _, name } => name,
+            RawCommand::Leaf {
+                col_number: _,
+                name,
+                definition: _,
+            } => name,
+            RawCommand::Node {
+                col_number: _,
+                name,
+            } => name,
         }
     }
 }
@@ -237,14 +306,14 @@ impl SourceBuilder {
             source: String::new(),
             col_stack: vec![],
             names: HashMap::new(),
-            
         }
     }
 
     fn push(&mut self, command: RawCommand) {
         if self.start_col == None {
             self.start_col = Some(command.col_number());
-            self.source.push_str("fn parse(input: &str) -> Result<Output, ParseError> {let tree = vec![")
+            self.source
+                .push_str("fn parse(input: &str) -> Result<Vec<Output>, ParseError> {let tree = vec![")
         }
         println!("start_col: {}", self.start_col.unwrap());
         validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);
@@ -254,8 +323,12 @@ impl SourceBuilder {
                     panic!("duplicate command name");
                 }
                 siblings.push(command.name().to_string());
-            },
-            None => {self.names.insert(command.col_number(), vec![command.name().to_string()]); ()},
+            }
+            None => {
+                self.names
+                    .insert(command.col_number(), vec![command.name().to_string()]);
+                ()
+            }
         }
         self._pop_string(command.col_number());
         self._push_string(&command);
@@ -263,27 +336,33 @@ impl SourceBuilder {
 
     fn _push_string(&mut self, command: &RawCommand) {
         match command {
-            RawCommand::Leaf { col_number: _, name, definition } => {
+            RawCommand::Leaf {
+                col_number: _,
+                name,
+                definition,
+            } => {
                 self.col_stack.iter_mut().for_each(|x| x.has_child = true);
-                self.source.push_str(&format!("CommandNode::Leaf{{name: {name}, command: {definition}()}},"))
-            },
+                self.source.push_str(&format!(
+                    "CommandNode::Leaf{{name: {name}, command: {definition}()}},"
+                ))
+            }
             RawCommand::Node { col_number, name } => {
-                self.source.push_str(&format!("CommandNode::Node{{name: {name}, children: vec!["));
+                self.source
+                    .push_str(&format!("CommandNode::Node{{name: {name}, children: vec!["));
                 self.col_stack.push(StackEntry::new(*col_number));
-            },
+            }
         }
     }
 
     fn _pop_string(&mut self, child_col: i32) {
         while let Some(parent) = self.col_stack.last() {
-            if parent.col_number >= child_col  {
+            if parent.col_number >= child_col {
                 if !parent.has_child {
                     panic!("command has no final executor");
                 }
                 self.col_stack.pop();
                 self.source.push_str("]},")
-            }
-            else {
+            } else {
                 break;
             }
         }
@@ -291,7 +370,8 @@ impl SourceBuilder {
 
     fn finish(&mut self) {
         self._pop_string(self.start_col.unwrap());
-        self.source.push_str("]; return parse_with_tree(tree, input);}")
+        self.source
+            .push_str("]; return parse_with_tree(tree, input);}")
     }
 }
 
@@ -304,21 +384,28 @@ fn validate_format(start_col: i32, parent: Option<&StackEntry>, command: &RawCom
     }
     match parent {
         Some(stack_entry) => match command {
-            RawCommand::Leaf{ col_number: child_col, name: _, definition: _ } => {
+            RawCommand::Leaf {
+                col_number: child_col,
+                name: _,
+                definition: _,
+            } => {
                 if *child_col != start_col && *child_col != stack_entry.col_number + 4 {
                     panic!("invalid format -> leaf col number should be equal to start_col or parent_col + 4")
                 }
-            },
-            RawCommand::Node { col_number: child_col, name: _ } => {
-                if *child_col < start_col || *child_col > stack_entry.col_number + 4   {
+            }
+            RawCommand::Node {
+                col_number: child_col,
+                name: _,
+            } => {
+                if *child_col < start_col || *child_col > stack_entry.col_number + 4 {
                     panic!("invalid format -> node col number should be between start_col and parent_col + 4")
                 }
-            },
+            }
         },
         None => {
             if command.col_number() != start_col {
                 panic!("invalid format -> col_number should be equal to start");
             }
-        },
+        }
     }
 }
