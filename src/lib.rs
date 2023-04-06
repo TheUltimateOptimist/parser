@@ -4,21 +4,21 @@ use std::{error::Error, fmt};
 #[derive(Serialize)]
 pub struct TreeNode {
     pub name: String,
-    pub children: Option<Vec<String>>,
+    pub children: Option<Vec<TreeNode>>,
 }
 
 #[derive(Serialize)]
 pub struct Table {
-    title: String,
-    data: Vec<Vec<String>>,
+    pub title: String,
+    pub data: Vec<Vec<String>>,
 }
 
 #[derive(Serialize)]
 pub struct PomodoroTimer {
-    duration: i32, //in seconds
-    pause: i32,    //in seconds
-    topic_id: i32,
-    topic_name: String,
+    pub duration: i32, //in seconds
+    pub pause: i32,    //in seconds
+    pub topic_id: i32,
+    pub topic_name: String,
 }
 
 pub enum Output {
@@ -285,7 +285,7 @@ pub struct Optional<'a> {
 
 impl Optional<'_> {
     fn name_is(&self, other: &str) -> bool {
-        return self.name == other;
+        return format!("--{}", self.name) == other;
     }
 }
 
