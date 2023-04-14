@@ -147,26 +147,37 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenS
     let tokens = match multiple {
         true => quote! {
             fn #command_name() -> Command<'static> {
-                fn private__executor(#inputs) -> Vec<Output> #body
+                async fn user__executor(#inputs) -> Vec<Output> #body
+                async fn to__async__vec(arguments: Vec<String>) -> Result<Vec<Output>, ParseError>{
+                    let output = user__executor(#callings_code);
+                    return Ok(output.await);
+                }
+                fn final__executor(arguments: Vec<String>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
+                    let output = to__async__vec(arguments);
+                    Box::pin(output)
+                }
                 Command {
                     params : vec![#final_params_code],
                     optionals: vec![#optionals_code],
-                    execute: |arguments| -> Result<Vec<Output>, ParseError> {
-                        Ok(private__executor(#callings_code))
-                    }
+                    execute: final__executor,
                 }
             }
         },
         false => quote! {
             fn #command_name() -> Command<'static> {
-                fn private__executor(#inputs) -> Output #body
+                async fn user__executor(#inputs) -> Output #body
+                async fn to__async__vec(arguments: Vec<String>) -> Result<Vec<Output>, ParseError>{
+                    let output = user__executor(#callings_code);
+                    return Ok(vec![output.await]);
+                }
+                fn final__executor(arguments: Vec<String>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
+                    let output = to__async__vec(arguments);
+                    Box::pin(output)
+                }
                 Command {
                     params : vec![#final_params_code],
                     optionals: vec![#optionals_code],
-                    execute: |arguments| -> Result<Vec<Output>, ParseError> {
-                        let output = private__executor(#callings_code);
-                        Ok(vec![output])
-                    }
+                    execute: final__executor,
                 }
             }
         },
@@ -313,7 +324,7 @@ impl SourceBuilder {
         if self.start_col == None {
             self.start_col = Some(command.col_number());
             self.source
-                .push_str("fn parse(input: &str) -> Result<Vec<Output>, ParseError> {let tree = vec![")
+                .push_str("fn parse(input: &str) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {let tree = vec![")
         }
         println!("start_col: {}", self.start_col.unwrap());
         validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);
