@@ -90,7 +90,7 @@ impl Next {
     }
 }
 
-fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenStream {
+fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: bool) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let mut param_names = Vec::new();
     let mut param_types = Vec::new();
@@ -176,8 +176,8 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenS
     };
     let type_name = format!("type_{}", command_name.to_string());
     let type_name: proc_macro2::TokenStream = type_name.parse().unwrap();
-    let tokens = match multiple {
-        true => quote! {
+    let tokens = match (multiple, result) {
+        (true, false) => quote! {
             #[allow(non_camel_case_types)]
             type #type_name = #state_type;
             fn #command_name() -> parser::Command<'static, #state_type> {
@@ -197,7 +197,7 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenS
                 }
             }
         },
-        false => quote! {
+        (false, false) => quote! {
             #[allow(non_camel_case_types)]
             type #type_name = #state_type;
             fn #command_name() -> parser::Command<'static, #state_type> {
@@ -217,6 +217,52 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenS
                 }
             }
         },
+        (true, true) => quote! {
+            #[allow(non_camel_case_types)]
+            type #type_name = #state_type;
+            fn #command_name() -> parser::Command<'static, #state_type> {
+                async fn user__executor(#inputs) -> Result<Vec<parser::Output>, Box<dyn std::error::Error>> #body
+                async fn to__async__vec(arguments: Vec<String>, state: parser::State<#state_type>) -> Result<Vec<parser::Output>, parser::ParseError>{
+                    let output = user__executor(#callings_code).await;
+                    match output {
+                        Ok(value) => Ok(value),
+                        Err(err) => Ok(vec![parser::Output::Error(err.to_string())]),
+                    }
+                }
+                fn final__executor(arguments: Vec<String>, state: parser::State<#state_type>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
+                    let output = to__async__vec(arguments, state);
+                    Box::pin(output)
+                }
+                parser::Command {
+                    params : vec![#final_params_code],
+                    optionals: vec![#optionals_code],
+                    execute: final__executor,
+                }
+            }
+        },
+        (false, true) => quote! {
+            #[allow(non_camel_case_types)]
+            type #type_name = #state_type;
+            fn #command_name() -> parser::Command<'static, #state_type> {
+                async fn user__executor(#inputs) -> Result<parser::Output, Box<dyn std::error::Error>> #body
+                async fn to__async__vec(arguments: Vec<String>, state: parser::State<#state_type>) -> Result<Vec<parser::Output>, parser::ParseError>{
+                    let output = user__executor(#callings_code).await;
+                    match output {
+                        Ok(value) => Ok(vec![value]),
+                        Err(err) => Ok(vec![parser::Output::Error(err.to_string())]),
+                    }
+                }
+                fn final__executor(arguments: Vec<String>, state: parser::State<#state_type>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
+                    let output = to__async__vec(arguments, state);
+                    Box::pin(output)
+                }
+                parser::Command {
+                    params : vec![#final_params_code],
+                    optionals: vec![#optionals_code],
+                    execute: final__executor,
+                }
+            }
+        },
     };
     println!("{}", tokens.to_string());
     TokenStream::from(tokens)
@@ -224,12 +270,22 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool) -> TokenS
 
 #[proc_macro_attribute]
 pub fn command(attr: TokenStream, item: TokenStream) -> TokenStream {
-    command_basis(attr, item, false)
+    command_basis(attr, item, false, false)
 }
 
 #[proc_macro_attribute]
 pub fn command_n(attr: TokenStream, item: TokenStream) -> TokenStream {
-    command_basis(attr, item, true)
+    command_basis(attr, item, true, false)
+}
+
+#[proc_macro_attribute]
+pub fn command_result(attr: TokenStream, item: TokenStream) -> TokenStream {
+    command_basis(attr, item, false, true)
+}
+
+#[proc_macro_attribute]
+pub fn command_n_result(attr: TokenStream, item: TokenStream) -> TokenStream {
+    command_basis(attr, item, true, true)
 }
 
 fn params(names: Vec<&&Ident>, types: Vec<&&Box<Type>>) -> TokenStream {
