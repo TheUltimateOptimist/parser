@@ -92,10 +92,16 @@ impl Output {
             Output::Url(_) => 207,
         }
     }
+}
 
-    pub fn to_json(&self) -> String {
-        fn _to_json<T: Serialize>(output: &Output, content: T) -> String {
-            serde_json::json!({"code": output.code(), "content": content}).to_string()
+pub trait ToJson {
+    fn to_json(&self) -> serde_json::Value;
+}
+
+impl ToJson for Output {
+    fn to_json(&self) -> serde_json::Value {
+        fn _to_json<T: Serialize>(output: &Output, content: T) -> serde_json::Value {
+            serde_json::json!({"code": output.code(), "content": content})
         }
         match self {
             Output::Empty => _to_json(self, ""),
@@ -107,6 +113,12 @@ impl Output {
             Output::Logout => _to_json(self, ""),
             Output::Url(url) => _to_json(self, url),
         }
+    }
+}
+
+impl ToJson for Vec<Output> {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!(self.iter().map(|x| x.to_json()).collect::<Vec<serde_json::Value>>())
     }
 }
 
