@@ -164,16 +164,6 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: b
         FnArg::Receiver(_) => panic!("wrong FnARg"),
         FnArg::Typed(the_type) => &the_type.ty,
     };
-    let state_type = match *(*state_type).clone() {
-        Type::Path(path) => {
-            let s = path.path.segments.last().unwrap().arguments.clone();
-            match s {
-                syn::PathArguments::AngleBracketed(args) => args.args,
-                _ => panic!("invalid arguments"),
-            }
-        },
-        _ => panic!("unexpected type"),
-    };
     let type_name = format!("type_{}", command_name.to_string());
     let type_name: proc_macro2::TokenStream = type_name.parse().unwrap();
     let tokens = match (multiple, result) {
@@ -182,11 +172,11 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: b
             type #type_name = #state_type;
             fn #command_name() -> parser::Command<'static, #state_type> {
                 async fn user__executor(#inputs) -> Vec<parser::Output> #body
-                async fn to__async__vec(arguments: Vec<String>, state: parser::State<#state_type>) -> Result<Vec<parser::Output>, parser::ParseError>{
+                async fn to__async__vec(arguments: Vec<String>, state: #state_type) -> Result<Vec<parser::Output>, parser::ParseError>{
                     let output = user__executor(#callings_code);
                     return Ok(output.await);
                 }
-                fn final__executor(arguments: Vec<String>, state: parser::State<#state_type>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
+                fn final__executor(arguments: Vec<String>, state: #state_type) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
                     let output = to__async__vec(arguments, state);
                     Box::pin(output)
                 }
@@ -202,11 +192,11 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: b
             type #type_name = #state_type;
             fn #command_name() -> parser::Command<'static, #state_type> {
                 async fn user__executor(#inputs) -> parser::Output #body
-                async fn to__async__vec(arguments: Vec<String>, state: parser::State<#state_type>) -> Result<Vec<parser::Output>, parser::ParseError>{
+                async fn to__async__vec(arguments: Vec<String>, state: #state_type) -> Result<Vec<parser::Output>, parser::ParseError>{
                     let output = user__executor(#callings_code);
                     return Ok(vec![output.await]);
                 }
-                fn final__executor(arguments: Vec<String>, state: parser::State<#state_type>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
+                fn final__executor(arguments: Vec<String>, state: #state_type) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
                     let output = to__async__vec(arguments, state);
                     Box::pin(output)
                 }
@@ -222,14 +212,14 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: b
             type #type_name = #state_type;
             fn #command_name() -> parser::Command<'static, #state_type> {
                 async fn user__executor(#inputs) -> Result<Vec<parser::Output>, Box<dyn std::error::Error>> #body
-                async fn to__async__vec(arguments: Vec<String>, state: parser::State<#state_type>) -> Result<Vec<parser::Output>, parser::ParseError>{
+                async fn to__async__vec(arguments: Vec<String>, state: #state_type) -> Result<Vec<parser::Output>, parser::ParseError>{
                     let output = user__executor(#callings_code).await;
                     match output {
                         Ok(value) => Ok(value),
                         Err(err) => Ok(vec![parser::Output::Error(err.to_string())]),
                     }
                 }
-                fn final__executor(arguments: Vec<String>, state: parser::State<#state_type>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
+                fn final__executor(arguments: Vec<String>, state: #state_type) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
                     let output = to__async__vec(arguments, state);
                     Box::pin(output)
                 }
@@ -245,14 +235,14 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: b
             type #type_name = #state_type;
             fn #command_name() -> parser::Command<'static, #state_type> {
                 async fn user__executor(#inputs) -> Result<parser::Output, Box<dyn std::error::Error>> #body
-                async fn to__async__vec(arguments: Vec<String>, state: parser::State<#state_type>) -> Result<Vec<parser::Output>, parser::ParseError>{
+                async fn to__async__vec(arguments: Vec<String>, state: #state_type) -> Result<Vec<parser::Output>, parser::ParseError>{
                     let output = user__executor(#callings_code).await;
                     match output {
                         Ok(value) => Ok(vec![value]),
                         Err(err) => Ok(vec![parser::Output::Error(err.to_string())]),
                     }
                 }
-                fn final__executor(arguments: Vec<String>, state: parser::State<#state_type>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
+                fn final__executor(arguments: Vec<String>, state: #state_type) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {
                     let output = to__async__vec(arguments, state);
                     Box::pin(output)
                 }
@@ -425,7 +415,7 @@ impl SourceBuilder {
             let full_name = command.name();
             let name = &full_name[1..full_name.len() - 1];
             self.source
-                .push_str(&format!("type CustomState = type_{name}; fn parse(input: &str, state: parser::State<CustomState>) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {{let tree = vec!["))
+                .push_str(&format!("type CustomState = type_{name}; fn parse(input: &str, state: CustomState) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {{let tree = vec!["))
         }
         println!("start_col: {}", self.start_col.unwrap());
         validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);

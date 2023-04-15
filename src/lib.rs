@@ -160,7 +160,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-pub fn parse_with_tree<S>(tree: Vec<CommandNode<'_, S>>, input: &str, state: State<S>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
+pub fn parse_with_tree<S>(tree: Vec<CommandNode<'_, S>>, input: &str, state: S) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
     let tokens = match tokenize(input) {
         Ok(tokens) => tokens,
         Err(err) => return Box::pin(std::future::ready(Err(err))),
@@ -204,7 +204,7 @@ impl<S> CommandNode<'_, S> {
 pub struct Command<'a, S> {
     pub params: Vec<Parameter<'a>>,
     pub optionals: Vec<Optional<'a>>,
-    pub execute: fn(Vec<String>, State<S>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>>,
+    pub execute: fn(Vec<String>, S) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>>,
 }
 
 impl<S> Command<'_, S> {
@@ -262,7 +262,7 @@ impl<S> Command<'_, S> {
         return Ok(arguments);
     }
 
-    fn execute(&self, tokens: Vec<String>, state: State<S>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
+    fn execute(&self, tokens: Vec<String>, state: S) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
         let arguments = match self._extract_arguments(tokens){
             Ok(arguments) => arguments,
             Err(err) => return Box::pin(std::future::ready(Err(err))),
@@ -368,5 +368,3 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, ParseError> {
     }
     return Ok(parts);
 }
-
-pub struct State<S>(pub S);
