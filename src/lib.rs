@@ -179,6 +179,14 @@ pub fn parse_with_tree<S>(tree: Vec<CommandNode<'_, S>>, input: &str, state: S) 
     };
     let mut remaining_tree = &tree;
     for (index, token) in tokens.iter().enumerate() {
+        if index == 0 && token == "help" {
+            let name_tree = TreeNode { 
+                name: None,
+                children: Some(tree.iter().map(|x| x.name_tree()).collect()),
+            };
+            let title = Output::Text("All commands:".to_owned());
+            return Box::pin(std::future::ready(Ok(vec![title, Output::Tree(name_tree)])));
+        }
         let matching_node = remaining_tree.iter().find(|x| x.name_is(token));
         match matching_node {
             Some(CommandNode::Leaf { name: _, command }) => {
@@ -210,7 +218,22 @@ impl<S> CommandNode<'_, S> {
             CommandNode::Node { name, children: _ } => *name == other,
         }
     }
+
+    fn name_tree(&self) -> TreeNode {
+        match self {
+            CommandNode::Leaf { name, command: _ } => TreeNode {
+                name: Some(name.to_string()),
+                children: None
+            },
+            CommandNode::Node { name, children } => TreeNode {
+                name: Some(name.to_string()),
+                children: Some(children.iter().map(|x| x.name_tree()).collect())
+            },
+        }
+    }
 }
+
+
 
 #[derive(Debug)]
 pub struct Command<'a, S> {
