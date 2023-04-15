@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::{error::Error, fmt, future::{Future, self}, pin::Pin};
+use std::{error::Error, fmt, future::{Future}, pin::Pin};
 
 #[derive(Serialize)]
 pub struct TreeNode {
@@ -153,7 +153,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-pub fn parse_with_tree(tree: Vec<CommandNode<'_>>, input: &str) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
+pub fn parse_with_tree<S>(tree: Vec<CommandNode<'_, S>>, input: &str, state: State<S>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
     let tokens = match tokenize(input) {
         Ok(tokens) => tokens,
         Err(err) => return Box::pin(std::future::ready(Err(err))),
@@ -163,7 +163,7 @@ pub fn parse_with_tree(tree: Vec<CommandNode<'_>>, input: &str) -> Pin<Box<dyn F
         let matching_node = remaining_tree.iter().find(|x| x.name_is(token));
         match matching_node {
             Some(CommandNode::Leaf { name: _, command }) => {
-                return command.execute(tokens.into_iter().skip(index + 1).collect());
+                return command.execute(tokens.into_iter().skip(index + 1).collect(), state);
             }
             Some(CommandNode::Node { name: _, children }) => remaining_tree = children,
             None => return Box::pin(std::future::ready(Err(ParseError::InvalidCommand(token.to_string())))),
@@ -173,18 +173,18 @@ pub fn parse_with_tree(tree: Vec<CommandNode<'_>>, input: &str) -> Pin<Box<dyn F
 }
 
 #[derive(Debug)]
-pub enum CommandNode<'a> {
+pub enum CommandNode<'a, S> {
     Leaf {
         name: &'a str,
-        command: Command<'a>,
+        command: Command<'a, S>,
     },
     Node {
         name: &'a str,
-        children: Vec<CommandNode<'a>>,
+        children: Vec<CommandNode<'a, S>>,
     },
 }
 
-impl CommandNode<'_> {
+impl<S> CommandNode<'_, S> {
     fn name_is(&self, other: &str) -> bool {
         match self {
             CommandNode::Leaf { name, command: _ } => *name == other,
@@ -194,13 +194,13 @@ impl CommandNode<'_> {
 }
 
 #[derive(Debug)]
-pub struct Command<'a> {
+pub struct Command<'a, S> {
     pub params: Vec<Parameter<'a>>,
     pub optionals: Vec<Optional<'a>>,
-    pub execute: fn(Vec<String>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>>,
+    pub execute: fn(Vec<String>, State<S>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>>,
 }
 
-impl Command<'_> {
+impl<S> Command<'_, S> {
     fn _extract_arguments(&self, tokens: Vec<String>) -> Result<Vec<String>, ParseError> {
         println!("tokens: {:?}", tokens);
         let mut arguments: Vec<String> = Vec::new();
@@ -255,12 +255,12 @@ impl Command<'_> {
         return Ok(arguments);
     }
 
-    fn execute(&self, tokens: Vec<String>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
+    fn execute(&self, tokens: Vec<String>, state: State<S>) -> Pin<Box<dyn Future<Output = Result<Vec<Output>, ParseError>> + core::marker::Send>> {
         let arguments = match self._extract_arguments(tokens){
             Ok(arguments) => arguments,
             Err(err) => return Box::pin(std::future::ready(Err(err))),
         };
-        (self.execute)(arguments)
+        (self.execute)(arguments, state)
     }
 }
 
@@ -361,3 +361,5 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, ParseError> {
     }
     return Ok(parts);
 }
+
+pub struct State<S>(pub S);
