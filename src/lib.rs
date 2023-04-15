@@ -29,6 +29,7 @@ pub enum Output {
     Tree(TreeNode),
     PomodoroTimer(PomodoroTimer),
     Logout,
+    Url(String),
 }
 
 impl Serialize for Output {
@@ -70,6 +71,10 @@ impl Serialize for Output {
                 code: self.code(),
                 content: "",
             }),
+            Output::Url(url) => serializer.serialize_some(&Serializable {
+                code: self.code(),
+                content: url,
+            }),
         }
     }
 }
@@ -84,6 +89,7 @@ impl Output {
             Output::Tree(_) => 204,
             Output::PomodoroTimer(_) => 205,
             Output::Logout => 206,
+            Output::Url(_) => 207,
         }
     }
 
@@ -99,6 +105,7 @@ impl Output {
             Output::Tree(tree_node) => _to_json(self, tree_node),
             Output::PomodoroTimer(timer) => _to_json(self, timer),
             Output::Logout => _to_json(self, ""),
+            Output::Url(url) => _to_json(self, url),
         }
     }
 }
