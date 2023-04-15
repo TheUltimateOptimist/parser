@@ -3,7 +3,7 @@ use std::{error::Error, fmt, future::{Future}, pin::Pin};
 
 #[derive(Serialize)]
 pub struct TreeNode {
-    pub name: String,
+    pub name: Option<String>,
     pub children: Option<Vec<TreeNode>>,
 }
 
