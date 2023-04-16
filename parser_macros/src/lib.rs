@@ -285,6 +285,7 @@ fn params(names: Vec<&&Ident>, types: Vec<&&Box<Type>>) -> TokenStream {
         .map(|(index, x)| -> TokenStream {
             let typ = &types[index];
             let name = x.to_string();
+            let name = name.replace("_", "-");
             quote!(parser::Parameter{name: #name, datatype: parser::DataType::#typ}).into()
         })
         .collect::<Vec<TokenStream>>();
@@ -303,6 +304,7 @@ fn optionals(names: Vec<&Path>, types: Vec<&&Box<Type>>, defaults: Vec<&Expr>) -
             let typ = types[index];
             let default = defaults[index];
             let name = quote!(#x).to_string();
+            let name = name.replace("_", "-");
             quote!(parser::Optional{name: #name, default: #default.to_string(), datatype: parser::DataType::#typ})
                 .into()
         })
