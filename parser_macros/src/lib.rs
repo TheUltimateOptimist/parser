@@ -1,8 +1,8 @@
 extern crate proc_macro;
 extern crate proc_macro2;
 use core::panic;
-use std::collections::HashMap;
 use std::str::FromStr;
+use std::vec;
 
 use proc_macro::TokenStream;
 use proc_macro::TokenTree;
@@ -14,10 +14,10 @@ use syn::{
 
 #[proc_macro]
 pub fn register(item: TokenStream) -> TokenStream {
-    let mut source_builder = SourceBuilder::new();
     let mut next = Next::Name;
     let mut name: Option<TokenTree> = None;
     let mut col_numbers: Vec<i32> = vec![0];
+    let mut raw_command = RawCommand::Node { col_number: 0, name: "".to_owned(), children: vec![]};
     for token in item {
         let token_str = token.to_string();
         if token_str == "-" {
@@ -31,7 +31,7 @@ pub fn register(item: TokenStream) -> TokenStream {
             },
             Next::Value => {
                 if let Some(name_token) = name {
-                    source_builder.push(RawCommand::Leaf {
+                    raw_command.insert(RawCommand::Leaf {
                         col_number: col_numbers.remove(0),
                         name: name_token.to_string(),
                         definition: token.to_string(),
@@ -42,9 +42,10 @@ pub fn register(item: TokenStream) -> TokenStream {
             Next::NameOrColon => {
                 if !token_str.eq(":") {
                     let tree = name.unwrap();
-                    source_builder.push(RawCommand::Node {
+                    raw_command.insert(RawCommand::Node {
                         col_number: col_numbers.remove(0),
                         name: tree.to_string(),
+                        children: vec![],
                     });
                     name = Some(token);
                     col_numbers.push(0);
@@ -54,18 +55,13 @@ pub fn register(item: TokenStream) -> TokenStream {
         next = next.next(token_str);
     }
     if let Some(tree) = name {
-        source_builder.push(RawCommand::Node {
+        raw_command.insert(RawCommand::Node {
             col_number: col_numbers.remove(0),
             name: tree.to_string(),
+            children: vec![],
         });
     }
-    source_builder.finish();
-    //println!("{}", &source_builder.source);
-    TokenStream::from_str(&source_builder.source).unwrap()
-    // for token in item {
-    //     println!("{}", token.to_string());
-    // }
-    // TokenStream::from_str("const one: i32 = 3;").unwrap()
+    TokenStream::from_str(&raw_command.build()).unwrap()
 }
 
 enum Next {
@@ -254,7 +250,6 @@ fn command_basis(attr: TokenStream, item: TokenStream, multiple: bool, result: b
             }
         },
     };
-    println!("{}", tokens.to_string());
     TokenStream::from(tokens)
 }
 
@@ -337,28 +332,6 @@ fn callings(inputs: &Punctuated<FnArg, Comma>) -> TokenStream {
 }
 
 #[derive(Debug)]
-struct StackEntry {
-    col_number: i32,
-    has_child: bool,
-}
-
-impl StackEntry {
-    fn new(col_number: i32) -> StackEntry {
-        StackEntry {
-            col_number: col_number,
-            has_child: false,
-        }
-    }
-}
-
-struct SourceBuilder {
-    start_col: Option<i32>,
-    source: String,
-    col_stack: Vec<StackEntry>,
-    names: HashMap<i32, Vec<String>>,
-}
-
-#[derive(Debug)]
 enum RawCommand {
     Leaf {
         col_number: i32,
@@ -368,6 +341,7 @@ enum RawCommand {
     Node {
         col_number: i32,
         name: String,
+        children: Vec<RawCommand>,
     },
 }
 
@@ -382,7 +356,15 @@ impl RawCommand {
             RawCommand::Node {
                 col_number,
                 name: _,
+                children: _,
             } => *col_number,
+        }
+    }
+
+    fn _children(&self) -> Option<&Vec<RawCommand>> {
+        match self {
+            RawCommand::Leaf { col_number: _, name: _, definition: _ } => None,
+            RawCommand::Node { col_number: _, name: _, children } => Some(children),
         }
     }
 
@@ -396,124 +378,55 @@ impl RawCommand {
             RawCommand::Node {
                 col_number: _,
                 name,
+                children: _,
             } => name,
         }
     }
-}
 
-impl SourceBuilder {
-    fn new() -> Self {
-        SourceBuilder {
-            start_col: None,
-            source: String::new(),
-            col_stack: vec![],
-            names: HashMap::new(),
+    fn insert(&mut self, command: RawCommand) {
+        let parent_col = self.col_number();
+        let child_col = command.col_number();
+        if child_col % 4 != 0 {
+            panic!("The number of dashes has to be dividable by four");
         }
-    }
-
-    fn push(&mut self, command: RawCommand) {
-        if self.start_col == None {
-            self.start_col = Some(command.col_number());
-            let full_name = command.name();
-            let name = &full_name[1..full_name.len() - 1];
-            self.source
-                .push_str(&format!("type CustomState = type_{name}; fn parse(input: &str, state: CustomState) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {{let tree = vec!["))
+        if child_col - 4 < parent_col {
+            panic!("child column number - 1 can not be smaller than parent column number")
         }
-        println!("start_col: {}", self.start_col.unwrap());
-        validate_format(self.start_col.unwrap(), self.col_stack.last(), &command);
-        match self.names.get_mut(&command.col_number()) {
-            Some(siblings) => {
-                if siblings.contains(command.name()) {
-                    panic!("duplicate command name");
+        match self {
+            RawCommand::Leaf { col_number: _, name: _, definition: _ } => {
+                panic!("Can not insert a new command below a leaf command");
+            },
+            RawCommand::Node { col_number: _, name: _, children } => {
+                if child_col - 4 == parent_col {
+                    children.iter().for_each(|x| {
+                        if x.name() == command.name() {
+                            panic!("Duplicate Command names");
+                        }
+                    });
+                    children.push(command);
                 }
-                siblings.push(command.name().to_string());
-            }
-            None => {
-                self.names
-                    .insert(command.col_number(), vec![command.name().to_string()]);
-                ()
-            }
-        }
-        self._pop_string(command.col_number());
-        self._push_string(&command);
-    }
-
-    fn _push_string(&mut self, command: &RawCommand) {
-        match command {
-            RawCommand::Leaf {
-                col_number: _,
-                name,
-                definition,
-            } => {
-                self.col_stack.iter_mut().for_each(|x| x.has_child = true);
-                self.source.push_str(&format!(
-                    "parser::CommandNode::Leaf{{name: {name}, command: {definition}()}},"
-                ))
-            }
-            RawCommand::Node { col_number, name } => {
-                self.source
-                    .push_str(&format!("parser::CommandNode::Node{{name: {name}, children: vec!["));
-                self.col_stack.push(StackEntry::new(*col_number));
-            }
-        }
-    }
-
-    fn _pop_string(&mut self, child_col: i32) {
-        while let Some(parent) = self.col_stack.last() {
-            if parent.col_number >= child_col {
-                if !parent.has_child {
-                    panic!("command has no final executor");
+                else {
+                    children.last_mut().unwrap().insert(command);
                 }
-                self.col_stack.pop();
-                self.source.push_str("]},")
-            } else {
-                break;
-            }
-        }
+            },
+        };
     }
 
-    fn finish(&mut self) {
-        self._pop_string(self.start_col.unwrap());
-        self.source
-            .push_str("]; return parser::parse_with_tree(tree, input, state);}");
-        println!("--------------------------------------------------------------");
-        println!("{}", self.source);
+    fn build(&self) -> String {
+        let name = self._children().unwrap().first().unwrap().name();
+        println!("length: {}", name.len());
+        let name_without_quotes = &name[1..name.len() - 1];
+        format!("type CustomState = type_{}; fn parse(input: &str, state: CustomState) -> Pin<Box<dyn Future<Output = Result<Vec<parser::Output>, parser::ParseError>> + core::marker::Send>> {{let tree = vec![{}]; return parser::parse_with_tree(tree, input, state);}}",
+            name_without_quotes, self._children().unwrap().iter().map(|x| x._build()).collect::<Vec<String>>().join(", ")
+        )
     }
-}
 
-fn validate_format(start_col: i32, parent: Option<&StackEntry>, command: &RawCommand) {
-    println!("{:?}", command);
-    println!("{:?}", parent);
-    if command.col_number() % 4 != 0 {
-        panic!("invalid format -> col_number not dividable by four");
-    }
-    if command.col_number() < start_col {
-        panic!("invalid format -> col_number smaller than start");
-    }
-    match parent {
-        Some(stack_entry) => match command {
-            RawCommand::Leaf {
-                col_number: child_col,
-                name: _,
-                definition: _,
-            } => {
-                if *child_col != start_col && *child_col != stack_entry.col_number + 4 {
-                    panic!("invalid format -> leaf col number should be equal to start_col or parent_col + 4")
-                }
-            }
-            RawCommand::Node {
-                col_number: child_col,
-                name: _,
-            } => {
-                if *child_col < start_col || *child_col > stack_entry.col_number + 4 {
-                    panic!("invalid format -> node col number should be between start_col and parent_col + 4")
-                }
-            }
-        },
-        None => {
-            if command.col_number() != start_col {
-                panic!("invalid format -> col_number should be equal to start");
-            }
+    fn _build(&self) -> String {
+        match self {
+            RawCommand::Leaf { col_number: _, name, definition } => format!("parser::CommandNode::Leaf{{name: {name}, command: {definition}()}}"),
+            RawCommand::Node { col_number: _, name, children } => {
+                format!("parser::CommandNode::Node{{name: {name}, children: vec![{}]}}", children.iter().map(|x| x._build()).collect::<Vec<String>>().join(", "))
+            },
         }
     }
 }
