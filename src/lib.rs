@@ -211,6 +211,22 @@ pub enum CommandNode<'a, S> {
     },
 }
 
+fn get_description(parameters: &Vec<Parameter>, optionals: &Vec<Optional>) -> Option<Vec<TreeNode>> {
+    if parameters.is_empty() && optionals.is_empty() {
+        return None;
+    }
+    let mut nodes: Vec<TreeNode> = vec![];
+    for parameter in parameters {
+        let name = format!("{}: {}", parameter.name, parameter.datatype.to_string());
+        nodes.push(TreeNode { name: Some(name), children: None});
+    }
+    for optional in optionals {
+        let name = format!("--{}: {} = {}", optional.name, optional.datatype.to_string(), optional.default);
+        nodes.push(TreeNode { name: Some(name), children: None });
+    }
+    Some(nodes)
+}
+
 impl<S> CommandNode<'_, S> {
     fn name_is(&self, other: &str) -> bool {
         match self {
@@ -221,10 +237,11 @@ impl<S> CommandNode<'_, S> {
 
     fn name_tree(&self) -> TreeNode {
         match self {
-            CommandNode::Leaf { name, command: _ } => TreeNode {
+            CommandNode::Leaf { name, command } => {
+                TreeNode {
                 name: Some(name.to_string()),
-                children: None
-            },
+                children: get_description(command.get_params(), command.get_optionals())
+            }},
             CommandNode::Node { name, children } => TreeNode {
                 name: Some(name.to_string()),
                 children: Some(children.iter().map(|x| x.name_tree()).collect())
@@ -243,6 +260,13 @@ pub struct Command<'a, S> {
 }
 
 impl<S> Command<'_, S> {
+    fn get_params(&self) -> &Vec<Parameter> {
+        return &self.params;
+    }
+
+    fn get_optionals(&self) -> &Vec<Optional> {
+        return &self.optionals;
+    }
     fn _extract_arguments(&self, tokens: Vec<String>) -> Result<Vec<String>, ParseError> {
         println!("tokens: {:?}", tokens);
         let mut arguments: Vec<String> = Vec::new();
@@ -323,6 +347,27 @@ pub enum DataType {
     f64,
     String,
     bool,
+}
+
+impl std::fmt::Display for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DataType::u8 => write!(f, "u8"),
+            DataType::u16 => write!(f, "u16"),
+            DataType::u32 => write!(f, "u32"),
+            DataType::u64 => write!(f, "u64"),
+            DataType::u128 => write!(f, "u128"),
+            DataType::i8 => write!(f, "i8"),
+            DataType::i16 => write!(f, "i16"),
+            DataType::i32 => write!(f, "i32"),
+            DataType::i64 => write!(f, "i64"),
+            DataType::i128 => write!(f, "i128"),
+            DataType::f32 => write!(f, "f32"),
+            DataType::f64 => write!(f, "f64"),
+            DataType::String => write!(f, "String"),
+            DataType::bool => write!(f, "bool"),
+        }
+    }
 }
 
 #[derive(Debug)]
